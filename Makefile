@@ -55,7 +55,10 @@ dirs:
 	@mkdir -p build
 	@mkdir -p build/SecureViewer.app/Contents/MacOS
 	@mkdir -p build/SecureViewer.app/Contents/Resources
+	@mkdir -p build/SecureViewer.app/Contents/MacOS/bin
 	@$(MAKE) info-plist
+	@cp bin/senc build/SecureViewer.app/Contents/MacOS/bin/
+	@chmod +x build/SecureViewer.app/Contents/MacOS/bin/senc
 
 # Generate Info.plist
 info-plist:

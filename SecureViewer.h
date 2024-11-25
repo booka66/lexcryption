@@ -65,6 +65,8 @@ private:
   QString currentFilePath;
   bool contentModified;
   QLabel *dropOverlay;
+  QPixmap originalImage;
+  QAudioOutput *audioOutput;
 
   std::filesystem::path createSecureTempDir();
   bool execCommand(const std::string &cmd, std::string &output);
@@ -76,6 +78,8 @@ private:
   void showDropOverlay(bool show);
   void setupDropOverlay();
   void saveAndEncryptFile(const QString &filePath);
+  void resizeEvent(QResizeEvent *event) override;
+  void updateImageScale();
 };
 
 #endif

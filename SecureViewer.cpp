@@ -26,7 +26,7 @@ SecureViewer::SecureViewer(QWidget *parent) : QMainWindow(parent) {
   decryptButton = new QPushButton("Decrypt File", this);
   decryptButton->setEnabled(false);
   clearButton = new QPushButton("Clear", this);
-  saveButton = new QPushButton("Save & Encrypt", this);
+  saveButton = new QPushButton("Save and Encrypt", this);
   uploadButton = new QPushButton("Encrypt File", this);
   passwordInput = new QLineEdit(this);
   passwordInput->setPlaceholderText(
@@ -42,10 +42,15 @@ SecureViewer::SecureViewer(QWidget *parent) : QMainWindow(parent) {
   contentStack = new QStackedWidget(this);
   textViewer = new QTextEdit(this);
   textViewer->setReadOnly(false);
+
   imageViewer = new QLabel(this);
   imageViewer->setAlignment(Qt::AlignCenter);
   imageViewer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  imageViewer->setMinimumSize(200, 200);
+
   videoPlayer = new QMediaPlayer(this);
+  audioOutput = new QAudioOutput(this);
+  videoPlayer->setAudioOutput(audioOutput);
   videoWidget = new QVideoWidget(this);
   videoPlayer->setVideoOutput(videoWidget);
 
@@ -217,20 +222,54 @@ void SecureViewer::handleMediaError([[maybe_unused]] QMediaPlayer::Error error,
                        QString("Error playing media: %1").arg(errorString));
 }
 
+void SecureViewer::resizeEvent(QResizeEvent *event) {
+  QMainWindow::resizeEvent(event);
+  if (contentStack->currentWidget() == imageViewer && !originalImage.isNull()) {
+    updateImageScale();
+  }
+  dropOverlay->setGeometry(rect());
+}
+
+void SecureViewer::updateImageScale() {
+  if (originalImage.isNull())
+    return;
+
+  QSize viewSize = imageViewer->size();
+  QSize imageSize = originalImage.size();
+
+  double widthRatio = static_cast<double>(viewSize.width()) / imageSize.width();
+  double heightRatio =
+      static_cast<double>(viewSize.height()) / imageSize.height();
+
+  double ratio = std::min(widthRatio, heightRatio);
+
+  int newWidth = static_cast<int>(imageSize.width() * ratio);
+  int newHeight = static_cast<int>(imageSize.height() * ratio);
+
+  QPixmap scaled = originalImage.scaled(
+      newWidth, newHeight, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+  imageViewer->setPixmap(scaled);
+}
+
 bool SecureViewer::displayContent(const fs::path &filePath) {
   QString extension =
       QString::fromStdString(filePath.extension().string()).toLower();
 
   if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
       extension == ".gif" || extension == ".bmp" || extension == ".webp") {
-    QPixmap pixmap(QString::fromStdString(filePath.string()));
-    if (pixmap.isNull()) {
+    originalImage.load(QString::fromStdString(filePath.string()));
+    if (originalImage.isNull()) {
       QMessageBox::warning(this, "Error", "Failed to load image");
       return false;
     }
-    imageViewer->setPixmap(pixmap.scaled(
-        imageViewer->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    updateImageScale();
     contentStack->setCurrentWidget(imageViewer);
+
+    if (contentStack->currentWidget() == imageViewer &&
+        !originalImage.isNull()) {
+      updateImageScale();
+    }
+
     return true;
   }
 
@@ -238,6 +277,7 @@ bool SecureViewer::displayContent(const fs::path &filePath) {
            extension == ".mov" || extension == ".webm") {
     videoPlayer->setSource(
         QUrl::fromLocalFile(QString::fromStdString(filePath.string())));
+    audioOutput->setVolume(1.0); // Set initial volume to 100%
     videoPlayer->play();
     contentStack->setCurrentWidget(videoWidget);
     return true;
@@ -448,6 +488,7 @@ void SecureViewer::openFile() {
 void SecureViewer::clearContent() {
   cleanupTempFiles();
   videoPlayer->stop();
+  audioOutput->setVolume(0.0);
   textViewer->clear();
   imageViewer->clear();
   passwordInput->clear();
@@ -471,22 +512,18 @@ void SecureViewer::saveAndEncrypt() {
   }
 }
 
-// New method to handle the actual encryption
 void SecureViewer::saveAndEncryptFile(const QString &filePath) {
   bool ok;
   QString password = QInputDialog::getText(
       this, "Encryption Password",
       "Enter password (minimum 6 characters):", QLineEdit::Password, "", &ok);
-
   if (!ok || password.length() < 6) {
     QMessageBox::warning(this, "Warning", "Invalid password!");
     return;
   }
-
   QString verify =
       QInputDialog::getText(this, "Verify Password",
                             "Verify password:", QLineEdit::Password, "", &ok);
-
   if (!ok || verify != password) {
     QMessageBox::critical(this, "Error", "Passwords do not match!");
     return;
@@ -510,11 +547,16 @@ void SecureViewer::saveAndEncryptFile(const QString &filePath) {
   // Get the directory of the file
   fs::path filedir = fs::path(filePath.toStdString()).parent_path();
 
+  // Get the path to the senc binary relative to the application
+  QString appPath = QCoreApplication::applicationDirPath();
+  QString sencPath = appPath + "/bin/senc";
+
   // Execute senc directly on the file in its location
-  std::string cmd =
-      "cd \"" + filedir.string() + "\" && " + "cat \"" +
-      fs::path(tempPwdFile.toStdString()).string() + "\" | " + "senc \"" +
-      fs::path(filePath.toStdString()).filename().string() + "\" 2>&1";
+  std::string cmd = "cd \"" + filedir.string() + "\" && " + "cat \"" +
+                    fs::path(tempPwdFile.toStdString()).string() + "\" | " +
+                    "\"" + sencPath.toStdString() + "\" \"" +
+                    fs::path(filePath.toStdString()).filename().string() +
+                    "\" 2>&1";
 
   std::string output;
   bool success = execCommand(cmd, output);
