@@ -15,7 +15,9 @@ QTINC := -I$(QTDIR)/include \
          -I$(QTDIR)/include/QtGui \
          -I$(QTDIR)/include/QtWidgets \
          -I$(QTDIR)/include/QtMultimedia \
-         -I$(QTDIR)/include/QtMultimediaWidgets
+         -I$(QTDIR)/include/QtMultimediaWidgets \
+         -I$(QTDIR)/include/QtPdf \
+         -I$(QTDIR)/include/QtPdfWidgets
 
 # Framework paths and libraries
 QTLIB := -F$(QTDIR)/lib \
@@ -23,7 +25,9 @@ QTLIB := -F$(QTDIR)/lib \
          -framework QtGui \
          -framework QtCore \
          -framework QtMultimedia \
-         -framework QtMultimediaWidgets
+         -framework QtMultimediaWidgets \
+         -framework QtPdf \
+         -framework QtPdfWidgets
 
 # Include paths
 INCLUDES := $(QTINC) \
@@ -104,7 +108,8 @@ $(TARGET): $(OBJECTS)
 
 # Clean build files
 clean:
-	rm -rf build/
+	sudo rm -rf build/
+	rm -rf /packaging/
 
 # Install Qt dependencies using Homebrew
 deps:

@@ -16,7 +16,7 @@ namespace fs = std::filesystem;
 SecureViewer::SecureViewer(QWidget *parent) : QMainWindow(parent) {
   setWindowTitle("Secure File Viewer");
   setMinimumSize(800, 600);
-  setAcceptDrops(true); // Enable drag and drop
+  setAcceptDrops(true);
 
   centralWidget = new QWidget(this);
   setCentralWidget(centralWidget);
@@ -24,13 +24,11 @@ SecureViewer::SecureViewer(QWidget *parent) : QMainWindow(parent) {
 
   auto *buttonLayout = new QHBoxLayout();
   decryptButton = new QPushButton("Decrypt File", this);
-  decryptButton->setEnabled(false);
   clearButton = new QPushButton("Clear", this);
   saveButton = new QPushButton("Save and Encrypt", this);
   uploadButton = new QPushButton("Encrypt File", this);
   passwordInput = new QLineEdit(this);
-  passwordInput->setPlaceholderText(
-      "Enter decryption password (min 6 characters)");
+  passwordInput->setPlaceholderText("Enter decryption password here, love :)");
   passwordInput->setEchoMode(QLineEdit::Password);
 
   buttonLayout->addWidget(decryptButton);
@@ -41,7 +39,7 @@ SecureViewer::SecureViewer(QWidget *parent) : QMainWindow(parent) {
 
   contentStack = new QStackedWidget(this);
   textViewer = new QTextEdit(this);
-  textViewer->setReadOnly(false);
+  textViewer->setReadOnly(true);
 
   imageViewer = new QLabel(this);
   imageViewer->setAlignment(Qt::AlignCenter);
@@ -53,6 +51,23 @@ SecureViewer::SecureViewer(QWidget *parent) : QMainWindow(parent) {
   videoPlayer->setAudioOutput(audioOutput);
   videoWidget = new QVideoWidget(this);
   videoPlayer->setVideoOutput(videoWidget);
+
+  // Initialize PDF components
+  pdfDocument = new QPdfDocument(this);
+  pdfViewer = new QPdfView(this);
+  pdfViewer->setDocument(pdfDocument);
+
+  // Create scrollable area for PDF
+  pdfScrollArea = new QScrollArea(this);
+  pdfScrollArea->setWidget(pdfViewer);
+  pdfScrollArea->setWidgetResizable(true);
+  pdfScrollArea->setAlignment(Qt::AlignCenter);
+
+  // Ensure PDF viewer stays fixed width but allows vertical scrolling
+  pdfViewer->setSizePolicy(QSizePolicy::Preferred,
+                           QSizePolicy::MinimumExpanding);
+
+  contentStack->addWidget(pdfScrollArea);
 
   contentStack->addWidget(textViewer);
   contentStack->addWidget(imageViewer);
@@ -75,20 +90,15 @@ SecureViewer::SecureViewer(QWidget *parent) : QMainWindow(parent) {
   connect(uploadButton, &QPushButton::clicked, this,
           &SecureViewer::handleUnencryptedFile);
   connect(autoDeleteTimer, &QTimer::timeout, this, &SecureViewer::clearContent);
-  connect(passwordInput, &QLineEdit::textChanged, this,
-          &SecureViewer::validatePassword);
   connect(videoPlayer, &QMediaPlayer::errorOccurred, this,
           &SecureViewer::handleMediaError);
   connect(saveButton, &QPushButton::clicked, this,
           &SecureViewer::saveAndEncrypt);
-  connect(textViewer, &QTextEdit::textChanged,
-          [this]() { contentModified = true; });
   connect(videoPlayer, &QMediaPlayer::playbackStateChanged, this,
           &SecureViewer::handlePlaybackStateChanged);
 
   tempDir = createSecureTempDir();
-  isEditing = true;
-  contentModified = false;
+  clearContent();
 }
 
 void SecureViewer::setupDropOverlay() {
@@ -144,20 +154,21 @@ void SecureViewer::dropEvent(QDropEvent *event) {
     if (!urlList.isEmpty()) {
       QString filePath = urlList.first().toLocalFile();
       if (filePath.endsWith(".senc", Qt::CaseInsensitive)) {
-        // Handle encrypted file
         if (!passwordInput->text().isEmpty()) {
           decryptFile(filePath.toStdString(), passwordInput->text());
         } else {
-          QMessageBox::warning(this, "Warning",
-                               "Please enter the decryption password first!");
+          QString password = QInputDialog::getText(
+              this, "Decryption Password",
+              "Enter decryption password:", QLineEdit::Password);
+
+          if (!password.isEmpty()) {
+            decryptFile(filePath.toStdString(), password);
+            passwordInput->setText(password);
+          }
         }
       } else {
-        // Handle unencrypted file - just display it
         currentFilePath = filePath;
-        if (displayContent(filePath.toStdString())) {
-          isEditing = true;
-          contentModified = true;
-        }
+        displayContent(filePath.toStdString());
       }
     }
   }
@@ -171,10 +182,7 @@ void SecureViewer::handleUnencryptedFile() {
 
   if (!filePath.isEmpty()) {
     currentFilePath = filePath;
-    if (displayContent(filePath.toStdString())) {
-      isEditing = true;
-      contentModified = true;
-    }
+    displayContent(filePath.toStdString());
   }
 }
 
@@ -185,17 +193,14 @@ void SecureViewer::handleFileUpload(const QString &filePath) {
     return;
   }
 
-  // For text files, load into text editor
   if (filePath.endsWith(".txt", Qt::CaseInsensitive) ||
       filePath.endsWith(".md", Qt::CaseInsensitive) ||
       filePath.endsWith(".csv", Qt::CaseInsensitive)) {
     QTextStream in(&file);
     textViewer->setText(in.readAll());
+    textViewer->setReadOnly(true);
     contentStack->setCurrentWidget(textViewer);
-    isEditing = true;
-    contentModified = true;
   } else {
-    // For other files, copy to temporary location and prepare for encryption
     QString tempFile =
         QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) +
         "/" + QFileInfo(filePath).fileName();
@@ -214,10 +219,6 @@ void SecureViewer::handleFileUpload(const QString &filePath) {
   file.close();
 }
 
-void SecureViewer::validatePassword(const QString &password) {
-  decryptButton->setEnabled(password.length() >= 6);
-}
-
 void SecureViewer::handleMediaError([[maybe_unused]] QMediaPlayer::Error error,
                                     const QString &errorString) {
   QMessageBox::warning(this, "Media Error",
@@ -230,6 +231,12 @@ void SecureViewer::resizeEvent(QResizeEvent *event) {
     updateImageScale();
   }
   dropOverlay->setGeometry(rect());
+  if (contentStack->currentWidget() == pdfScrollArea) {
+    QSize viewSize = size();
+    pdfViewer->setMinimumWidth(viewSize.width() * 0.9);
+    pdfViewer->setMinimumHeight(viewSize.height() * 0.9);
+    pdfViewer->setZoomMode(QPdfView::ZoomMode::FitToWidth);
+  }
 }
 
 void SecureViewer::updateImageScale() {
@@ -265,6 +272,9 @@ bool SecureViewer::displayContent(const fs::path &filePath) {
   QString extension =
       QString::fromStdString(filePath.extension().string()).toLower();
 
+  // At the start of the method, ensure textViewer is always read-only
+  textViewer->setReadOnly(true);
+
   if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
       extension == ".gif" || extension == ".bmp" || extension == ".webp") {
     originalImage.load(QString::fromStdString(filePath.string()));
@@ -287,13 +297,46 @@ bool SecureViewer::displayContent(const fs::path &filePath) {
            extension == ".mov" || extension == ".webm") {
     videoPlayer->setSource(
         QUrl::fromLocalFile(QString::fromStdString(filePath.string())));
-    audioOutput->setVolume(1.0); // Set initial volume to 100%
+    audioOutput->setVolume(1.0);
     videoPlayer->play();
     contentStack->setCurrentWidget(videoWidget);
     return true;
-  }
+  } else if (extension == ".pdf") {
+    QFile file(QString::fromStdString(filePath.string()));
+    if (!file.open(QIODevice::ReadOnly)) {
+      QMessageBox::warning(this, "Error", "Failed to open PDF file");
+      return false;
+    }
 
-  else {
+    // Load the PDF document in try-catch block
+    try {
+      pdfDocument->load(&file);
+    } catch (const std::exception &e) {
+      QMessageBox::warning(this, "Error",
+                           QString("Failed to load PDF document: %1")
+                               .arg(QString::fromStdString(e.what())));
+      file.close();
+      return false;
+    }
+
+    file.close();
+
+    // Configure the view for multiple pages
+    pdfViewer->setPageMode(
+        QPdfView::PageMode::SinglePage); // Changed from SinglePage to MultiPage
+    pdfViewer->setZoomMode(QPdfView::ZoomMode::FitToWidth);
+
+    // Set page spacing
+    pdfViewer->setPageSpacing(20); // Add some spacing between pages
+
+    // Calculate and set a reasonable size for the viewer
+    QSize viewSize = size();
+    pdfViewer->setMinimumWidth(viewSize.width() * 0.9);
+    pdfViewer->setMinimumHeight(viewSize.height() * 0.9);
+
+    contentStack->setCurrentWidget(pdfScrollArea);
+    return true;
+  } else {
     try {
       std::ifstream file(filePath, std::ios::binary);
       if (file) {
@@ -316,6 +359,9 @@ SecureViewer::~SecureViewer() {
   cleanupTempFiles();
   if (fs::exists(tempDir)) {
     fs::remove_all(tempDir);
+  }
+  if (pdfDocument) {
+    pdfDocument->close();
   }
 }
 
@@ -469,7 +515,15 @@ void SecureViewer::cleanupTempFiles() {
   textViewer->clear();
   imageViewer->clear();
   videoPlayer->stop();
-  passwordInput->clear();
+}
+
+void SecureViewer::requestPassword() {
+  QString password =
+      QInputDialog::getText(this, "Decryption Password",
+                            "Enter decryption password:", QLineEdit::Password);
+  if (!password.isEmpty()) {
+    passwordInput->setText(password);
+  }
 }
 
 void SecureViewer::openFile() {
@@ -482,16 +536,15 @@ void SecureViewer::openFile() {
   }
 
   if (passwordInput->text().isEmpty()) {
-    QMessageBox::warning(this, "Warning",
-                         "Please enter the decryption password!");
-    return;
+    requestPassword();
+    if (passwordInput->text().isEmpty()) {
+      return;
+    }
   }
 
   if (decryptFile(fileName.toStdString(), passwordInput->text())) {
     autoDeleteTimer->start();
     textViewer->setReadOnly(true);
-    isEditing = false;
-    contentModified = false;
   }
 }
 
@@ -501,24 +554,17 @@ void SecureViewer::clearContent() {
   audioOutput->setVolume(0.0);
   textViewer->clear();
   imageViewer->clear();
-  passwordInput->clear();
   autoDeleteTimer->stop();
-  textViewer->setReadOnly(false);
-  isEditing = true;
-  contentModified = false;
+  textViewer->setReadOnly(true);
   currentFilePath.clear();
   contentStack->setCurrentWidget(textViewer);
+  if (pdfDocument) {
+    pdfDocument->close();
+  }
 }
 
 void SecureViewer::saveAndEncrypt() {
-  if (contentModified && contentStack->currentWidget() == textViewer) {
-    // Handle text editor content
-    QString downloadsPath =
-        QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
-    QString tempFile = downloadsPath + "/temp_content.txt";
-    saveAndEncryptFile(tempFile);
-  } else if (!currentFilePath.isEmpty()) {
-    // Handle uploaded/dropped file
+  if (!currentFilePath.isEmpty()) {
     saveAndEncryptFile(currentFilePath);
   }
 }
@@ -540,7 +586,6 @@ void SecureViewer::saveAndEncryptFile(const QString &filePath) {
     return;
   }
 
-  // Create a temporary file for the password
   QString tempPwdFile =
       QStandardPaths::writableLocation(QStandardPaths::TempLocation) +
       "/temp_pwd_" + QString::number(QCoreApplication::applicationPid());
@@ -576,8 +621,8 @@ void SecureViewer::saveAndEncryptFile(const QString &filePath) {
   QFile::remove(tempPwdFile);
 
   if (success) {
-    contentModified = false;
     QMessageBox::information(this, "Success", "File encrypted successfully!");
+    clearContent();
   } else {
     QMessageBox::critical(
         this, "Error",

@@ -134,10 +134,10 @@ cat >"$RESOURCES_DIR/welcome.html" <<EOF
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Welcome to $APP_NAME, Alexia :)</title>
+    <title>Welcome to $APP_NAME</title>
 </head>
 <body>
-    <h1>Welcome to $APP_NAME $APP_VERSION</h1>
+    <h1>Welcome to $APP_NAME $APP_VERSION, Alexia <3</h1>
     <p>This installer will guide you through the installation of $APP_NAME.</p>
 </body>
 </html>
@@ -162,8 +162,7 @@ EOF
 cat >"$RESOURCES_DIR/license.txt" <<EOF
 Copyright (c) $(date +%Y)
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
+Permission is hereby granted, free of charge (other than the promise of eventual marriage), to Alexia Nelson to deal
 in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is

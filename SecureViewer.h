@@ -12,7 +12,11 @@
 #include <QMediaPlayer>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QPdfDocument>
+#include <QPdfView>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QString>
@@ -39,7 +43,6 @@ protected:
 private slots:
   void openFile();
   void clearContent();
-  void validatePassword(const QString &password);
   void handleMediaError(QMediaPlayer::Error error, const QString &errorString);
   void handleUnencryptedFile();
   void handleFileUpload(const QString &filePath);
@@ -62,12 +65,13 @@ private:
   QTimer *autoDeleteTimer;
   std::filesystem::path tempDir;
   std::vector<std::filesystem::path> tempFiles;
-  bool isEditing;
   QString currentFilePath;
-  bool contentModified;
   QLabel *dropOverlay;
   QPixmap originalImage;
   QAudioOutput *audioOutput;
+  QPdfDocument *pdfDocument;
+  QPdfView *pdfViewer;
+  QScrollArea *pdfScrollArea;
 
   std::filesystem::path createSecureTempDir();
   bool execCommand(const std::string &cmd, std::string &output);
@@ -81,6 +85,7 @@ private:
   void saveAndEncryptFile(const QString &filePath);
   void resizeEvent(QResizeEvent *event) override;
   void updateImageScale();
+  void requestPassword();
 };
 
 #endif
