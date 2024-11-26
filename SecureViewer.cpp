@@ -6,6 +6,7 @@
 #include <QStackedWidget>
 #include <QStyle>
 #include <QVideoWidget>
+#include <QtConcurrent>
 #include <array>
 #include <cstdio>
 #include <fstream>
@@ -261,12 +262,17 @@ void SecureViewer::setupFileSidebar() {
   auto *sidebarLayout = new QVBoxLayout(sidebarWidget);
 
   fileList = new QListWidget(this);
-  fileList->setMinimumWidth(200);
+  fileList->setMinimumWidth(50); // Keep minimum width
   sidebarLayout->addWidget(fileList);
 
   // Move existing central widget into splitter
   splitter->addWidget(sidebarWidget);
   splitter->addWidget(centralWidget);
+
+  // Set initial sizes for a better default view
+  QList<int> sizes;
+  sizes << 100 << width() - 100; // Initial split with sidebar at 200px
+  splitter->setSizes(sizes);
 
   // Setup file watcher and search timer
   fsWatcher = new QFileSystemWatcher(this);
@@ -295,15 +301,23 @@ void SecureViewer::setupFileSidebar() {
 void SecureViewer::startFileSearch() {
   updateSearchStatus("Starting...");
   fileList->clear();
-  searchPaths.clear();
-  currentSearchIndex = 0;
 
-  // Get home directory
-  QString homePath = QDir::homePath();
-  searchPaths.push_back(fs::path(homePath.toStdString()));
+  // Start search in background thread
+  searchFuture = QtConcurrent::run([this]() {
+    QString homePath = QDir::homePath();
+    QStringList encFiles = fileCache.findEncryptedFiles(homePath);
 
-  // Start search timer
-  searchTimer->start();
+    // Update UI in main thread
+    QMetaObject::invokeMethod(
+        this,
+        [this, encFiles]() {
+          for (const QString &path : encFiles) {
+            addEncFile(path.toStdString());
+          }
+          updateSearchStatus("Complete");
+        },
+        Qt::QueuedConnection);
+  });
 }
 
 void SecureViewer::searchNextDirectory() {
@@ -751,7 +765,6 @@ void SecureViewer::saveAndEncryptFile(const QString &filePath) {
   QString sencPath = appPath + "/bin/senc";
 
   // Execute senc directly on the file in its location
-
   std::string cmd = "cd \"" + filedir.string() + "\" && " + "cat \"" +
                     fs::path(tempPwdFile.toStdString()).string() + "\" | " +
                     "\"" + sencPath.toStdString() + "\" \"" +

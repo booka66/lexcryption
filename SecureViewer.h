@@ -1,10 +1,12 @@
 #ifndef SECUREVIEWER_H
 #define SECUREVIEWER_H
+#include "FileCache.h"
 #include <QApplication>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileSystemWatcher>
+#include <QFuture>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
@@ -86,6 +88,8 @@ private:
   QLabel *timerStatusLabel;
   QLabel *fileStatusLabel;
   QLabel *searchStatusLabel;
+  FileCache fileCache;
+  QFuture<void> searchFuture;
 
   std::filesystem::path createSecureTempDir();
   bool execCommand(const std::string &cmd, std::string &output);
