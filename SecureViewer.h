@@ -44,6 +44,7 @@ private slots:
   void handleUnencryptedFile();
   void handleFileUpload(const QString &filePath);
   void saveAndEncrypt();
+  void handlePlaybackStateChanged(QMediaPlayer::PlaybackState state);
 
 private:
   QWidget *centralWidget;

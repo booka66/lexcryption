@@ -83,6 +83,8 @@ SecureViewer::SecureViewer(QWidget *parent) : QMainWindow(parent) {
           &SecureViewer::saveAndEncrypt);
   connect(textViewer, &QTextEdit::textChanged,
           [this]() { contentModified = true; });
+  connect(videoPlayer, &QMediaPlayer::playbackStateChanged, this,
+          &SecureViewer::handlePlaybackStateChanged);
 
   tempDir = createSecureTempDir();
   isEditing = true;
@@ -249,6 +251,14 @@ void SecureViewer::updateImageScale() {
   QPixmap scaled = originalImage.scaled(
       newWidth, newHeight, Qt::KeepAspectRatio, Qt::SmoothTransformation);
   imageViewer->setPixmap(scaled);
+}
+
+void SecureViewer::handlePlaybackStateChanged(
+    QMediaPlayer::PlaybackState state) {
+  if (state == QMediaPlayer::StoppedState) {
+    contentStack->setCurrentWidget(textViewer);
+    videoPlayer->setSource(QUrl()); // Clear the video source
+  }
 }
 
 bool SecureViewer::displayContent(const fs::path &filePath) {
@@ -497,6 +507,7 @@ void SecureViewer::clearContent() {
   isEditing = true;
   contentModified = false;
   currentFilePath.clear();
+  contentStack->setCurrentWidget(textViewer);
 }
 
 void SecureViewer::saveAndEncrypt() {
