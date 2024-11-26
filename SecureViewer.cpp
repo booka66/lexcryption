@@ -15,17 +15,37 @@ namespace fs = std::filesystem;
 
 SecureViewer::SecureViewer(QWidget *parent) : QMainWindow(parent) {
   setWindowTitle("Secure File Viewer");
-  setMinimumSize(800, 600);
   setAcceptDrops(true);
 
+  // Create status bar
+  mainStatusBar = statusBar();
+
+  // Create status labels
+  timerStatusLabel = new QLabel("No file decrypted", this);
+  fileStatusLabel = new QLabel("Current file: None", this);
+  searchStatusLabel = new QLabel("Search: Idle", this);
+
+  // Add permanent widgets to status bar
+  mainStatusBar->addPermanentWidget(timerStatusLabel);
+  mainStatusBar->addPermanentWidget(new QLabel(" | ", this)); // Separator
+  mainStatusBar->addPermanentWidget(fileStatusLabel);
+  mainStatusBar->addPermanentWidget(new QLabel(" | ", this)); // Separator
+  mainStatusBar->addPermanentWidget(searchStatusLabel);
+
+  // Set minimum sizes to prevent status bar items from collapsing
+  timerStatusLabel->setMinimumWidth(150);
+  fileStatusLabel->setMinimumWidth(200);
+  searchStatusLabel->setMinimumWidth(150);
+
+  // Rest of the constructor remains the same...
   centralWidget = new QWidget(this);
-  setCentralWidget(centralWidget);
   mainLayout = new QVBoxLayout(centralWidget);
 
   auto *buttonLayout = new QHBoxLayout();
   decryptButton = new QPushButton("Decrypt File", this);
   clearButton = new QPushButton("Clear", this);
   saveButton = new QPushButton("Save and Encrypt", this);
+  saveButton->setEnabled(false);
   uploadButton = new QPushButton("Encrypt File", this);
   passwordInput = new QLineEdit(this);
   passwordInput->setPlaceholderText("Enter decryption password here, love :)");
@@ -82,11 +102,14 @@ SecureViewer::SecureViewer(QWidget *parent) : QMainWindow(parent) {
   autoDeleteTimer->setInterval(timeout);
   autoDeleteTimer->setSingleShot(true);
 
+  setupFileSidebar();
   setupDropOverlay();
 
   connect(decryptButton, &QPushButton::clicked, this, &SecureViewer::openFile);
   connect(clearButton, &QPushButton::clicked, this,
           &SecureViewer::clearContent);
+  connect(clearButton, &QPushButton::clicked, this,
+          [this]() { saveButton->setEnabled(false); });
   connect(uploadButton, &QPushButton::clicked, this,
           &SecureViewer::handleUnencryptedFile);
   connect(autoDeleteTimer, &QTimer::timeout, this, &SecureViewer::clearContent);
@@ -96,9 +119,38 @@ SecureViewer::SecureViewer(QWidget *parent) : QMainWindow(parent) {
           &SecureViewer::saveAndEncrypt);
   connect(videoPlayer, &QMediaPlayer::playbackStateChanged, this,
           &SecureViewer::handlePlaybackStateChanged);
+  connect(autoDeleteTimer, &QTimer::timeout, this,
+          &SecureViewer::updateTimerStatus);
+
+  // Update timer status every second
+  QTimer *statusUpdateTimer = new QTimer(this);
+  connect(statusUpdateTimer, &QTimer::timeout, this,
+          &SecureViewer::updateTimerStatus);
+  statusUpdateTimer->start(1000);
 
   tempDir = createSecureTempDir();
   clearContent();
+}
+
+void SecureViewer::updateTimerStatus() {
+  if (autoDeleteTimer->isActive()) {
+    int remainingTime = autoDeleteTimer->remainingTime();
+    int minutes = remainingTime / 60000;
+    int seconds = (remainingTime % 60000) / 1000;
+    timerStatusLabel->setText(QString("Auto-delete in: %1:%2")
+                                  .arg(minutes, 2, 10, QChar('0'))
+                                  .arg(seconds, 2, 10, QChar('0')));
+  } else {
+    timerStatusLabel->setText("No file decrypted");
+  }
+}
+
+void SecureViewer::updateFileStatus(const QString &status) {
+  fileStatusLabel->setText("Current file: " + status);
+}
+
+void SecureViewer::updateSearchStatus(const QString &status) {
+  searchStatusLabel->setText("Search: " + status);
 }
 
 void SecureViewer::setupDropOverlay() {
@@ -154,6 +206,7 @@ void SecureViewer::dropEvent(QDropEvent *event) {
     if (!urlList.isEmpty()) {
       QString filePath = urlList.first().toLocalFile();
       if (filePath.endsWith(".senc", Qt::CaseInsensitive)) {
+        saveButton->setEnabled(false);
         if (!passwordInput->text().isEmpty()) {
           decryptFile(filePath.toStdString(), passwordInput->text());
         } else {
@@ -168,6 +221,7 @@ void SecureViewer::dropEvent(QDropEvent *event) {
         }
       } else {
         currentFilePath = filePath;
+        saveButton->setEnabled(true);
         displayContent(filePath.toStdString());
       }
     }
@@ -182,47 +236,127 @@ void SecureViewer::handleUnencryptedFile() {
 
   if (!filePath.isEmpty()) {
     currentFilePath = filePath;
+    if (!fs::exists(filePath.toStdString())) {
+      QMessageBox::critical(this, "Error", "File not found!");
+      return;
+    }
+    saveButton->setEnabled(true);
     displayContent(filePath.toStdString());
   }
-}
-
-void SecureViewer::handleFileUpload(const QString &filePath) {
-  QFile file(filePath);
-  if (!file.open(QIODevice::ReadOnly)) {
-    QMessageBox::critical(this, "Error", "Could not open the selected file!");
-    return;
-  }
-
-  if (filePath.endsWith(".txt", Qt::CaseInsensitive) ||
-      filePath.endsWith(".md", Qt::CaseInsensitive) ||
-      filePath.endsWith(".csv", Qt::CaseInsensitive)) {
-    QTextStream in(&file);
-    textViewer->setText(in.readAll());
-    textViewer->setReadOnly(true);
-    contentStack->setCurrentWidget(textViewer);
-  } else {
-    QString tempFile =
-        QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) +
-        "/" + QFileInfo(filePath).fileName();
-
-    if (QFile::copy(filePath, tempFile)) {
-      currentFilePath = tempFile;
-      QMessageBox::information(this, "File Ready",
-                               "File has been prepared for encryption. Click "
-                               "'Save & Encrypt' to encrypt the file.");
-    } else {
-      QMessageBox::critical(this, "Error",
-                            "Failed to prepare file for encryption!");
-    }
-  }
-
-  file.close();
 }
 
 void SecureViewer::handleMediaError([[maybe_unused]] QMediaPlayer::Error error,
                                     const QString &errorString) {
   QMessageBox::warning(this, "Media Error",
                        QString("Error playing media: %1").arg(errorString));
+}
+
+void SecureViewer::setupFileSidebar() {
+  // Create splitter for main layout
+  auto *splitter = new QSplitter(Qt::Horizontal, this);
+  setCentralWidget(splitter);
+
+  // Create sidebar widget
+  auto *sidebarWidget = new QWidget(this);
+  auto *sidebarLayout = new QVBoxLayout(sidebarWidget);
+
+  fileList = new QListWidget(this);
+  fileList->setMinimumWidth(200);
+  sidebarLayout->addWidget(fileList);
+
+  // Move existing central widget into splitter
+  splitter->addWidget(sidebarWidget);
+  splitter->addWidget(centralWidget);
+
+  // Setup file watcher and search timer
+  fsWatcher = new QFileSystemWatcher(this);
+  searchTimer = new QTimer(this);
+  searchTimer->setInterval(100); // Search chunk every 100ms
+
+  connect(searchTimer, &QTimer::timeout, this,
+          &SecureViewer::searchNextDirectory);
+  connect(fileList, &QListWidget::itemDoubleClicked, this,
+          [this](QListWidgetItem *item) {
+            QString path = item->data(Qt::UserRole).toString();
+            if (!path.isEmpty()) {
+              if (passwordInput->text().isEmpty()) {
+                requestPassword();
+              }
+              if (!passwordInput->text().isEmpty()) {
+                decryptFile(path.toStdString(), passwordInput->text());
+              }
+            }
+          });
+
+  // Start initial search
+  startFileSearch();
+}
+
+void SecureViewer::startFileSearch() {
+  updateSearchStatus("Starting...");
+  fileList->clear();
+  searchPaths.clear();
+  currentSearchIndex = 0;
+
+  // Get home directory
+  QString homePath = QDir::homePath();
+  searchPaths.push_back(fs::path(homePath.toStdString()));
+
+  // Start search timer
+  searchTimer->start();
+}
+
+void SecureViewer::searchNextDirectory() {
+  if (currentSearchIndex >= searchPaths.size()) {
+    searchTimer->stop();
+    updateSearchStatus("Complete");
+    return;
+  }
+
+  updateSearchStatus(QString("Scanning... (%1/%2)")
+                         .arg(currentSearchIndex)
+                         .arg(searchPaths.size()));
+
+  try {
+    const fs::path &currentPath = searchPaths[currentSearchIndex++];
+
+    // Skip if not accessible
+    if (!fs::exists(currentPath) || !fs::is_directory(currentPath)) {
+      return;
+    }
+
+    // Iterate directory entries
+    for (const auto &entry : fs::directory_iterator(currentPath)) {
+      if (fs::is_directory(entry)) {
+        // Skip certain system directories
+        if (entry.path().filename().string()[0] == '.') {
+          continue;
+        }
+        searchPaths.push_back(entry.path());
+      } else if (entry.path().extension() == ".senc") {
+        addEncFile(entry.path());
+      }
+    }
+  } catch (const fs::filesystem_error &) {
+    // Skip inaccessible directories
+  }
+}
+
+void SecureViewer::addEncFile(const fs::path &path) {
+  QString qpath = QString::fromStdString(path.string());
+
+  // Check if already in list
+  for (int i = 0; i < fileList->count(); i++) {
+    if (fileList->item(i)->data(Qt::UserRole).toString() == qpath) {
+      return;
+    }
+  }
+
+  // Add to list
+  auto *item =
+      new QListWidgetItem(QString::fromStdString(path.filename().string()));
+  item->setData(Qt::UserRole, qpath);
+  fileList->addItem(item);
 }
 
 void SecureViewer::resizeEvent(QResizeEvent *event) {
@@ -269,6 +403,8 @@ void SecureViewer::handlePlaybackStateChanged(
 }
 
 bool SecureViewer::displayContent(const fs::path &filePath) {
+  QString filename = QString::fromStdString(filePath.filename().string());
+  updateFileStatus(filename);
   QString extension =
       QString::fromStdString(filePath.extension().string()).toLower();
 
@@ -383,6 +519,7 @@ fs::path SecureViewer::createSecureTempDir() {
 
 bool SecureViewer::decryptFile(const fs::path &encryptedFile,
                                const QString &password) {
+  clearContent();
   if (!fs::exists(encryptedFile)) {
     QMessageBox::critical(this, "Error", "File not found!");
     return false;
@@ -427,6 +564,11 @@ bool SecureViewer::decryptFile(const fs::path &encryptedFile,
         if (displayContent(entry.path())) {
           tempFiles.push_back(entry.path());
           foundDecrypted = true;
+          saveButton->setEnabled(false);
+          // Reset the timer
+          autoDeleteTimer->stop();
+          // Start the timer
+          autoDeleteTimer->start();
           break;
         }
       }
@@ -543,12 +685,13 @@ void SecureViewer::openFile() {
   }
 
   if (decryptFile(fileName.toStdString(), passwordInput->text())) {
-    autoDeleteTimer->start();
     textViewer->setReadOnly(true);
   }
 }
 
 void SecureViewer::clearContent() {
+  updateFileStatus("None");
+  updateTimerStatus();
   cleanupTempFiles();
   videoPlayer->stop();
   audioOutput->setVolume(0.0);
@@ -608,6 +751,7 @@ void SecureViewer::saveAndEncryptFile(const QString &filePath) {
   QString sencPath = appPath + "/bin/senc";
 
   // Execute senc directly on the file in its location
+
   std::string cmd = "cd \"" + filedir.string() + "\" && " + "cat \"" +
                     fs::path(tempPwdFile.toStdString()).string() + "\" | " +
                     "\"" + sencPath.toStdString() + "\" \"" +
@@ -617,22 +761,24 @@ void SecureViewer::saveAndEncryptFile(const QString &filePath) {
   std::string output;
   bool success = execCommand(cmd, output);
 
-  // Clean up temporary password file
-  QFile::remove(tempPwdFile);
-
   if (success) {
     QMessageBox::information(this, "Success", "File encrypted successfully!");
     clearContent();
+    startFileSearch();
+    saveButton->setEnabled(false);
   } else {
     QMessageBox::critical(
         this, "Error",
         QString("Encryption failed:\n%1").arg(QString::fromStdString(output)));
   }
+
+  // Clean up temporary password file
+  QFile::remove(tempPwdFile);
 }
 
 int main(int argc, char *argv[]) {
   QApplication app(argc, argv);
   SecureViewer viewer;
-  viewer.show();
+  viewer.showMaximized();
   return app.exec();
 }
