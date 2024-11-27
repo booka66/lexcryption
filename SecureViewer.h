@@ -55,6 +55,7 @@ private slots:
   void handleUnencryptedFile();
   void saveAndEncrypt();
   void handlePlaybackStateChanged(QMediaPlayer::PlaybackState state);
+  void handleCacheUpdated();
 
 private:
   QWidget *centralWidget;

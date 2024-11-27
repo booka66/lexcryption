@@ -122,6 +122,8 @@ SecureViewer::SecureViewer(QWidget *parent) : QMainWindow(parent) {
           &SecureViewer::handlePlaybackStateChanged);
   connect(autoDeleteTimer, &QTimer::timeout, this,
           &SecureViewer::updateTimerStatus);
+  connect(&fileCache, &FileCache::cacheUpdated, this,
+          &SecureViewer::handleCacheUpdated);
 
   // Update timer status every second
   QTimer *statusUpdateTimer = new QTimer(this);
@@ -229,6 +231,18 @@ void SecureViewer::dropEvent(QDropEvent *event) {
   }
 
   event->acceptProposedAction();
+}
+
+void SecureViewer::handleCacheUpdated() {
+  // Clear and repopulate the file list
+  fileList->clear();
+  QString homePath = QDir::homePath();
+  QStringList encFiles = fileCache.findEncryptedFiles(homePath, true);
+
+  for (const QString &path : encFiles) {
+    addEncFile(path.toStdString());
+  }
+  updateSearchStatus("Updated");
 }
 
 void SecureViewer::handleUnencryptedFile() {
@@ -718,6 +732,11 @@ void SecureViewer::clearContent() {
   if (pdfDocument) {
     pdfDocument->close();
   }
+  if (!currentFilePath.isEmpty()) {
+    QString sencPath = QFileInfo(currentFilePath).absolutePath() + "/" +
+                       QFileInfo(currentFilePath).baseName() + ".senc";
+    fileCache.removeFromCache(sencPath);
+  }
 }
 
 void SecureViewer::saveAndEncrypt() {
@@ -777,6 +796,12 @@ void SecureViewer::saveAndEncryptFile(const QString &filePath) {
   if (success) {
     QMessageBox::information(this, "Success", "File encrypted successfully!");
     clearContent();
+
+    // Get the new .senc file path
+    QString sencPath = QFileInfo(filePath).absolutePath() + "/" +
+                       QFileInfo(filePath).baseName() + ".senc";
+    fileCache.addToCache(sencPath);
+
     startFileSearch();
     saveButton->setEnabled(false);
   } else {

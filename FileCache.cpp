@@ -1,21 +1,12 @@
 #include "FileCache.h"
-#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
-#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
 
-bool FileCache::CacheEntry::isValid() const {
-  QFileInfo info(path);
-  return info.exists() &&
-         info.lastModified().toSecsSinceEpoch() == lastModified &&
-         info.size() == size;
-}
-
-FileCache::FileCache() {
+FileCache::FileCache(QObject *parent) : QObject(parent) {
   // Set up cache file in app data location
   QString cacheDir =
       QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -28,7 +19,90 @@ FileCache::FileCache() {
       "/snap",           "/var/run",       "/var/lock", "/private/var/vm",
       "/Library/Caches", "/System/Volumes"};
 
+  setupFileWatcher();
   loadCache();
+}
+
+FileCache::~FileCache() {
+  saveCache();
+  delete fileWatcher;
+}
+
+void FileCache::setupFileWatcher() {
+  fileWatcher = new QFileSystemWatcher(this);
+  connect(fileWatcher, &QFileSystemWatcher::fileChanged, this,
+          &FileCache::handleFileChanged);
+  connect(fileWatcher, &QFileSystemWatcher::directoryChanged, this,
+          &FileCache::handleDirectoryChanged);
+}
+
+void FileCache::handleFileChanged(const QString &path) {
+  if (path.endsWith(".senc")) {
+    QFileInfo info(path);
+    if (!info.exists()) {
+      // File was deleted
+      removeFromCache(path);
+    } else {
+      // File was modified
+      addToCache(path);
+    }
+    emit cacheUpdated();
+  }
+}
+
+void FileCache::handleDirectoryChanged(const QString &path) {
+  // Scan directory for new .senc files
+  QDir dir(path);
+  QStringList sencFiles = dir.entryList(QStringList() << "*.senc", QDir::Files);
+
+  for (const QString &file : sencFiles) {
+    QString fullPath = dir.filePath(file);
+    if (!cache.contains(fullPath)) {
+      addToCache(fullPath);
+    }
+  }
+
+  emit cacheUpdated();
+}
+
+void FileCache::watchDirectory(const QString &path) {
+  if (!watchedDirectories.contains(path)) {
+    fileWatcher->addPath(path);
+    watchedDirectories.insert(path);
+
+    // Watch subdirectories too
+    QDirIterator it(path, QDir::Dirs | QDir::NoDotAndDotDot,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+      QString subdir = it.next();
+      if (!shouldSkipDirectory(subdir)) {
+        fileWatcher->addPath(subdir);
+        watchedDirectories.insert(subdir);
+      }
+    }
+  }
+}
+
+void FileCache::removeFromCache(const QString &path) {
+  cache.remove(path);
+  saveCache();
+}
+
+void FileCache::addToCache(const QString &path) {
+  QFileInfo info(path);
+  if (info.exists() && path.endsWith(".senc")) {
+    CacheEntry entry{path, info.lastModified().toSecsSinceEpoch(), info.size()};
+    cache.insert(path, entry);
+    fileWatcher->addPath(path);
+    saveCache();
+  }
+}
+
+bool FileCache::CacheEntry::isValid() const {
+  QFileInfo info(path);
+  return info.exists() &&
+         info.lastModified().toSecsSinceEpoch() == lastModified &&
+         info.size() == size;
 }
 
 void FileCache::loadCache() {
@@ -103,6 +177,9 @@ QStringList FileCache::findEncryptedFiles(const QString &startPath,
                                           bool useCache) {
   QStringList results;
 
+  // Watch the start directory and its subdirectories
+  watchDirectory(startPath);
+
   if (useCache) {
     // First check cache for valid entries
     for (const auto &entry : cache) {
@@ -133,10 +210,16 @@ QStringList FileCache::findEncryptedFiles(const QString &startPath,
     CacheEntry entry{filePath, info.lastModified().toSecsSinceEpoch(),
                      info.size()};
     cache.insert(filePath, entry);
+    fileWatcher->addPath(filePath); // Watch the file
     results << filePath;
   }
 
   // Save updated cache
   saveCache();
   return results;
+}
+
+void FileCache::clearCache() {
+  cache.clear();
+  saveCache();
 }
